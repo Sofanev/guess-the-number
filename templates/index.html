@@ -11,19 +11,25 @@
     <main class="shell">
         <header class="topbar">
             <a class="brand" href="/" aria-label="NUM HUNT"><span>NUM</span>//HUNT</a>
+            <form method="post" class="player-picker">
+                <input type="hidden" name="action" value="select_player">
+                <label for="player">ИГРОК</label>
+                <select id="player" name="player" onchange="this.form.submit()">
+                    {% for player in players %}<option value="{{ player }}" {% if player == current_player %}selected{% endif %}>{{ player }}</option>{% endfor %}
+                </select>
+            </form>
             <div class="profile">
                 <div class="avatar">LV.{{ level }}</div>
                 <div class="profile-copy">
                     <strong>{{ profile.xp }} XP</strong>
                     <div class="xp-track"><i style="width: {{ level_progress // 5 }}%"></i></div>
                 </div>
-                <form method="post" class="stats-reset"><button name="action" value="reset_stats" title="Сбросить статистику" aria-label="Сбросить статистику">↻</button></form>
             </div>
         </header>
 
         <section class="game-grid">
             <aside class="side-panel">
-                <div class="eyebrow">ЛИЧНЫЙ РЕКОРД</div>
+                <div class="eyebrow">РЕКОРД · {{ current_player|upper }}</div>
                 <div class="streak"><strong>{{ profile.streak }}</strong><span>x streak</span></div>
                 <div class="mini-stats">
                     <div><span>Победы</span><b>{{ profile.wins }}</b></div>
@@ -43,35 +49,35 @@
                         {% endfor %}
                     </form>
                 </div>
+
+                <div class="leaderboard">
+                    <div class="eyebrow">ТАБЛИЦА ИГРОКОВ</div>
+                    {% for player in leaderboard %}
+                    <div class="leader-row {{ 'current' if player.name == current_player }}">
+                        <span class="rank">{{ loop.index }}</span><span class="leader-name">{{ player.name }}</span><b>{{ player.xp }} XP</b>
+                    </div>
+                    {% endfor %}
+                </div>
             </aside>
 
             <section class="arena">
                 <div class="arena-head">
-                    <div>
-                        <span class="live-dot"></span>
-                        <span>SECTOR / {{ difficulty.maximum }}</span>
-                    </div>
+                    <div><span class="live-dot"></span><span>SECTOR / {{ difficulty.maximum }}</span></div>
                     <div class="timer" id="timer" data-remaining="{{ seconds_left }}" data-status="{{ game.status }}"><span>00:</span><b>{{ '%02d' % seconds_left }}</b></div>
                 </div>
 
                 <div class="target-zone">
-                    <div class="orbit orbit-one"></div>
-                    <div class="orbit orbit-two"></div>
-                    <div class="target-core">
-                        <span>?</span>
-                        <small>{{ game.lower_bound }} — {{ game.upper_bound }}</small>
-                    </div>
+                    <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+                    <div class="target-core"><span>?</span><small>{{ game.lower_bound }} — {{ game.upper_bound }}</small></div>
                 </div>
 
                 <div class="hud-row">
                     <div><span>ХОДЫ</span><strong>{{ game.attempts_used }}/{{ difficulty.attempts }}</strong></div>
                     <div><span>СКАНЫ</span><strong>{{ game.hints_left }}/2</strong></div>
-                    <div><span>СКОР</span><strong>{{ game.score }}</strong></div>
+                    <div><span>СКОР РАУНДА</span><strong>{{ game.score }}</strong></div>
                 </div>
 
-                <div class="message {{ game.message_type }}" id="message">
-                    {{ game.message }}
-                </div>
+                <div class="message {{ game.message_type }}" id="message">{{ game.message }}</div>
 
                 {% if game.status == 'playing' %}
                 <form method="post" class="guess-form" autocomplete="off">
@@ -80,26 +86,26 @@
                     <input id="guess" name="guess" type="number" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" placeholder="Введи координату" required autofocus>
                     <button type="submit">ВЫСТРЕЛ <span>→</span></button>
                 </form>
-                <form method="post" class="hint-form">
-                    <button name="action" value="hint" {% if game.hints_left == 0 %}disabled{% endif %}>⌁ СКАН ЦЕЛИ</button>
-                </form>
+                <form method="post" class="hint-form"><button name="action" value="hint" {% if game.hints_left == 0 %}disabled{% endif %}>⌁ СКАН ЦЕЛИ</button></form>
                 {% else %}
                 <form method="post" class="again-form">
-                    <input type="hidden" name="action" value="new_game">
-                    <input type="hidden" name="level" value="{{ game.level }}">
+                    <input type="hidden" name="action" value="new_game"><input type="hidden" name="level" value="{{ game.level }}">
                     <button type="submit">{% if game.status == 'won' %}ЗАБРАТЬ NEXT SECTOR{% else %}ПЕРЕЗАГРУЗИТЬ СЕКТОР{% endif %} <span>→</span></button>
                 </form>
                 {% endif %}
 
-                {% if game.history %}
-                <div class="history">
-                    {% for item in game.history|reverse %}
-                    <div class="shot {{ 'hit' if item.heat == 'HIT' }}">
-                        <b>#{{ item.guess }}</b><span>{{ item.heat }}</span><small>{{ item.direction }}</small>
+                <section class="guess-history" aria-live="polite">
+                    <div class="history-title"><span class="eyebrow">ИСТОРИЯ ВАРИАНТОВ</span><span>{{ game.history|length }} ход(а/ов)</span></div>
+                    {% if game.history %}
+                    <div class="history">
+                        {% for item in game.history|reverse %}
+                        <div class="shot {{ 'hit' if item.heat == 'HIT' }}">
+                            <b>#{{ item.guess }}</b><span>{{ item.heat }}</span><small>{{ item.direction }}</small>
+                        </div>
+                        {% endfor %}
                     </div>
-                    {% endfor %}
-                </div>
-                {% endif %}
+                    {% else %}<p class="empty-history">Твои варианты появятся здесь после первого выстрела.</p>{% endif %}
+                </section>
             </section>
         </section>
     </main>
@@ -112,6 +118,7 @@
             left = Math.max(0, left - 1);
             timer.querySelector('b').textContent = String(left).padStart(2, '0');
             if (left <= 10) timer.classList.add('danger');
+            if (left === 0) window.location.reload();
         }, 1000);
 
         if (document.querySelector('.message.success')) {
