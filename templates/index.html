@@ -1,134 +1,70 @@
 <!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NUM//HUNT — Угадай число</title>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NUM//HUNT — Тайна за числом</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <canvas id="number-field" aria-hidden="true"></canvas>
-    <main class="shell">
-        {% set difficulty = difficulties[game.level] %}
-        <header class="topbar">
-            <a class="brand" href="/"><span>NUM</span>//HUNT</a>
-            <form method="post" class="player-select">
-                <input type="hidden" name="action" value="select_player">
-                <label for="player">Игрок</label>
-                <select id="player" name="player" onchange="this.form.submit()">
-                    {% for name in players %}<option value="{{ name }}" {% if name == player %}selected{% endif %}>{{ name }}</option>{% endfor %}
-                </select>
+<canvas id="number-field" aria-hidden="true"></canvas>
+<main class="shell">
+    {% set difficulty = difficulties[game.level] %}
+    <header class="topbar">
+        <a class="brand" href="/"><span>NUM</span>//HUNT</a>
+        <div class="chapter"><b>{{ mission.chapter }}</b><span>СЕКТОР {{ difficulty.maximum }}</span></div>
+        <form method="post" class="player-select"><input type="hidden" name="action" value="select_player"><label for="player">Агент</label><select id="player" name="player" onchange="this.form.submit">{% for name in players %}<option value="{{ name }}" {% if name == player %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></form>
+    </header>
+
+    <div class="layout">
+        <aside>
+            <div class="mission-card">
+                <span>АКТИВНАЯ МИССИЯ</span><h2>{{ mission.title }}</h2><p>{{ mission.brief }}</p>
+            </div>
+            <div class="eyebrow">СЧЁТ АГЕНТА · {{ player|upper }}</div>
+            <div class="big-score">{{ profile.xp }}<small>XP</small></div>
+            <div class="stats-mini"><div><span>ПОБЕДЫ</span><b>{{ profile.wins }}</b></div><div><span>SERIES</span><b>{{ profile.streak }}×</b></div><div><span>ХОДЫ</span><b>{{ profile.guesses }}</b></div></div>
+            <section class="leaderboard"><div class="eyebrow">АГЕНТСТВО · РЕЙТИНГ</div>{% for item in leaderboard %}<div class="leader {% if item.name==player %}current{% endif %}"><span>{{ loop.index }}</span><b>{{ item.name }}</b><strong>{{ item.xp }} XP</strong></div>{% endfor %}</section>
+            <form method="post" class="solo-form"><input type="hidden" name="action" value="new_game"><input type="hidden" name="level" value="{{ game.level }}"><button>НАЧАТЬ НОВЫЙ РАССЛЕДОВАНИЕ</button></form>
+        </aside>
+
+        <section class="arena">
+            <div class="arena-head"><div class="mode-badge">{{ 'ДУЭЛЬ ПО ХОДАМ' if game.mode=='pass' else 'СОЛО-МИССИЯ' }}</div>{% if game.mode=='solo' and game.status=='playing' %}<div class="timer" id="timer" data-left="{{ seconds_left }}">00:<b>{{ '%02d' % seconds_left }}</b></div>{% endif %}</div>
+
+            <form method="post" class="mode-panel">
+                <input type="hidden" name="action" value="setup_pass">
+                <select name="hider" aria-label="Хранитель ключа">{% for name in players %}<option value="{{ name }}" {% if name==game.hider %}selected{% endif %}>{{ name }} хранит ключ</option>{% endfor %}</select>
+                <select name="guesser" aria-label="Охотник">{% for name in players %}<option value="{{ name }}" {% if name==game.guesser %}selected{% endif %}>{{ name }} раскрывает тайну</option>{% endfor %}</select>
+                <select name="level">{% for key,item in difficulties.items() %}<option value="{{ key }}" {% if key==game.level %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select>
+                <button>ПЕРЕДАТЬ КЛЮЧ</button>
             </form>
-            <div class="xp"><b>{{ profile.xp }} XP</b><span><i style="width:{{ level_progress // 5 }}%"></i></span></div>
-        </header>
 
-        <div class="layout">
-            <aside>
-                <div class="eyebrow">СЧЁТ · {{ player|upper }}</div>
-                <div class="big-score">{{ profile.xp }}<small>XP</small></div>
-                <div class="stats-mini">
-                    <div><span>ПОБЕДЫ</span><b>{{ profile.wins }}</b></div>
-                    <div><span>SERIES</span><b>{{ profile.streak }}×</b></div>
-                    <div><span>ПОРАЖЕНИЯ</span><b>{{ profile.losses }}</b></div>
-                </div>
+            <div class="story-line"><span>01</span><p>{% if game.status=='won' %}Ключ найден. Сектор зашифрованной сети открыт.{% elif game.status=='lost' %}След оборвался. Тайна сектора остаётся скрытой.{% elif game.mode=='pass' and game.phase=='set_number' %}Хранитель прячет ключ. Охотник отворачивается.{% else %}Город молчит. Только след одной координаты приведёт к правде.{% endif %}</p></div>
 
-                <section class="leaderboard">
-                    <div class="eyebrow">ОБЩИЙ РЕЙТИНГ</div>
-                    {% for item in leaderboard %}
-                    <div class="leader {% if item.name == player %}current{% endif %}">
-                        <span class="rank">{{ loop.index }}</span><span>{{ item.name }}</span><b>{{ item.xp }} XP</b>
-                    </div>
-                    {% endfor %}
-                </section>
+            <div class="target"><div class="orbit a"></div><div class="orbit b"></div><div class="core"><span>?</span><small>{{ game.lower_bound }}—{{ game.upper_bound }}</small></div></div>
 
-                <form method="post" class="solo-form">
-                    <input type="hidden" name="action" value="new_game">
-                    <input type="hidden" name="level" value="{{ game.level }}">
-                    <button type="submit">СОЛО-РАУНД</button>
-                </form>
-            </aside>
+            <div class="hud"><div><span>ХОДЫ</span><b>{{ game.attempts_used }}/{{ difficulty.attempts }}</b></div><div><span>СКАНЫ</span><b>{{ game.hints_left }}/2</b></div><div><span>НАГРАДА</span><b>{{ game.score }}</b></div></div>
+            <div class="message {{ game.message_type }}"><i>◆</i>{{ game.message }}</div>
 
-            <section class="arena">
-                <div class="arena-head">
-                    <div class="mode-badge">{{ 'РЕЖИМ ПО ХОДАМ' if game.mode == 'pass' else 'СОЛО-РЕЖИМ' }}</div>
-                    {% if game.mode == 'solo' %}<div class="timer">00:<b>{{ '%02d' % seconds_left }}</b></div>{% endif %}
-                </div>
+            {% if game.mode=='pass' and game.phase=='set_number' %}
+            <form method="post" class="guess-form"><input type="hidden" name="action" value="set_number"><label>{{ game.hider }}, спрячь ключ от охотника</label><div class="input-row"><input name="secret_number" type="password" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" required><button>ЗАШИФРОВАТЬ</button></div></form>
+            {% elif game.status=='playing' %}
+            <form method="post" class="guess-form"><input type="hidden" name="action" value="guess"><label>{{ game.guesser if game.mode=='pass' else player }}, введите координату следа</label><div class="input-row"><input name="guess" type="number" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" required autofocus><button>ПРОСЛЕДИТЬ</button></div></form>
+            {% else %}
+            <form method="post" class="restart"><input type="hidden" name="action" value="new_game"><input type="hidden" name="level" value="{{ game.level }}"><button>ОТКРЫТЬ НОВЫЙ СЕКТОР</button></form>
+            {% endif %}
 
-                <form method="post" class="mode-panel">
-                    <input type="hidden" name="action" value="setup_pass">
-                    <select name="hider" aria-label="Загадывающий">
-                        {% for name in players %}<option value="{{ name }}" {% if name == game.hider %}selected{% endif %}>{{ name }} загадывает</option>{% endfor %}
-                    </select>
-                    <select name="guesser" aria-label="Отгадывающий">
-                        {% for name in players %}<option value="{{ name }}" {% if name == game.guesser %}selected{% endif %}>{{ name }} отгадывает</option>{% endfor %}
-                    </select>
-                    <select name="level">
-                        {% for key, item in difficulties.items() %}<option value="{{ key }}" {% if key == game.level %}selected{% endif %}>{{ item.name }}</option>{% endfor %}
-                    </select>
-                    <button type="submit">НАЧАТЬ ПО ХОДАМ</button>
-                </form>
-
-                <div class="target">
-                    <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div>
-                    <div class="core"><span>?</span><small>{{ game.lower_bound }}—{{ game.upper_bound }}</small></div>
-                </div>
-
-                <div class="hud">
-                    <div><span>ХОДЫ</span><b>{{ game.attempts_used }}/{{ difficulty.attempts }}</b></div>
-                    <div><span>СКАНЫ</span><b>{{ game.hints_left }}/2</b></div>
-                    <div><span>СЧЁТ РАУНДА</span><b>{{ game.score }}</b></div>
-                </div>
-
-                <div class="message {{ game.message_type }}">{{ game.message }}</div>
-
-                {% if game.mode == 'pass' and game.phase == 'set_number' %}
-                <form method="post" class="guess-form">
-                    <input type="hidden" name="action" value="set_number">
-                    <label for="secret-number">{{ game.hider }}, введи секретное число</label>
-                    <div class="input-row">
-                        <input id="secret-number" name="secret_number" type="password" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" required>
-                        <button type="submit">СКРЫТЬ ЧИСЛО</button>
-                    </div>
-                </form>
-                {% elif game.status == 'playing' %}
-                <form method="post" class="guess-form">
-                    <input type="hidden" name="action" value="guess">
-                    <label for="guess">{{ game.guesser if game.mode=='pass' else player }}, твой вариант</label>
-                    <div class="input-row">
-                        <input id="guess" name="guess" type="number" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" required autofocus>
-                        <button type="submit">ПРОВЕРИТЬ</button>
-                    </div>
-                </form>
-                {% else %}
-                <form method="post" class="guess-form">
-                    <input type="hidden" name="action" value="new_game">
-                    <input type="hidden" name="level" value="{{ game.level }}">
-                    <button type="submit">НОВЫЙ СОЛО-РАУНД</button>
-                </form>
-                {% endif %}
-
-                <section class="history">
-                    <div class="eyebrow">ВВЕДЁННЫЕ ВАРИАНТЫ</div>
-                    {% if game.history %}
-                    <div class="history-list">
-                        {% for item in game.history|reverse %}
-                        <div class="shot {{ 'hit' if item.heat == 'HIT' }}"><b>{{ item.guess }}</b><span>{{ item.heat }}</span><small>{{ item.direction }}</small></div>
-                        {% endfor %}
-                    </div>
-                    {% else %}<p>Варианты появятся после первого хода.</p>{% endif %}
-                </section>
-            </section>
-        </div>
-    </main>
-
-    <script>
-        const canvas=document.getElementById('number-field'),ctx=canvas.getContext('2d');
-        let w,h,particles=[];
-        function resize(){const r=Math.min(devicePixelRatio||1,2);w=innerWidth;h=innerHeight;canvas.width=w*r;canvas.height=h*r;canvas.style.width=w+'px';canvas.style.height=h+'px';ctx.setTransform(r,0,0,r,0,0);particles=Array.from({length:Math.min(35,w/32)},()=>({x:Math.random()*w,y:Math.random()*h,t:['0','1','7','9','42'][Math.floor(Math.random()*5)],s:10+Math.random()*18,v:.1+Math.random()*.25,a:.06+Math.random()*.12}))} 
-        function draw(){ctx.clearRect(0,0,w,h);particles.forEach(p=>{ctx.font=`${p.s}px monospace`;ctx.fillStyle=`rgba(179,155,255,${p.a})`;ctx.fillText(p.t,p.x,p.y);p.y-=p.v;if(p.y<-30)p.y=h+30});requestAnimationFrame(draw)}resize();draw();
-        {% if game.mode == 'solo' and game.status == 'playing' %}
-        let left={{ seconds_left }};const timer=setInterval(()=>{left--;if(left<=0){clearInterval(timer);location.reload()}},1000);
-        {% endif %}
-    </script>
+            <section class="history"><div class="eyebrow">ДНЕВНИК СЛЕДОВ</div>{% if game.history %}<div class="history-list">{% for item in game.history|reverse %}<div class="shot {{ 'hit' if item.heat=='HIT' }}"><b>{{ item.guess }}</b><span>{{ item.heat }}</span><small>{{ item.direction }}</small></div>{% endfor %}</div>{% else %}<p>Журнал пока пуст. Первый след ожидает проверки.</p>{% endif %}</section>
+        </section>
+    </div>
+</main>
+<script>
+const canvas=document.getElementById('number-field'),ctx=canvas.getContext('2d');let w,h,p=[];
+function resize(){let r=Math.min(devicePixelRatio||1,2);w=innerWidth;h=innerHeight;canvas.width=w*r;canvas.height=h*r;canvas.style.width=w+'px';canvas.style.height=h+'px';ctx.setTransform(r,0,0,r,0,0);p=Array.from({length:Math.min(46,w/28)},()=>({x:Math.random()*w,y:Math.random()*h,t:['0','1','7','9','42'][Math.floor(Math.random()*5)],s:10+Math.random()*20,v:.08+Math.random()*30/100,a:.05+Math.random()*.12}))}
+function draw(){ctx.clearRect(0,0,w,h);p.forEach(o=>{ctx.font=`${o.s}px 'DM Mono',monospace`;ctx.fillStyle=`rgba(183,157,255,${o.a})`;ctx.fillText(o.t,o.x,o.y);o.y-=o.v;if(o.y<-30)o.y=h+30});requestAnimationFrame(draw)}resize();draw();
+{% if game.mode=='solo' and game.status=='playing' %}let left={{ seconds_left }};const timer=document.getElementById('timer'),tick=setInterval(()=>{left=Math.max(0,left-1);timer.querySelector('b').textContent=String(left).padStart(2,'0');if(left===0){clearInterval(tick);location.reload()}},1000);{% endif %}
+</script>
 </body>
 </html>
