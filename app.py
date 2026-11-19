@@ -3,31 +3,30 @@ import random
 import sqlite3
 import time
 import uuid
-from contextlib import closing
 
 from flask import Flask, redirect, render_template, request, session, url_for
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change-this-secret-key-before-deploying")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "num-hunt-local-secret")
 app.config["DATABASE"] = os.path.join(app.instance_path, "numhunt.sqlite3")
 
 PLAYERS = ("Софья", "Сергей", "Мила", "Настя")
 DIFFICULTIES = {
-    "rookie": {"name": "Новичок", "maximum": 50, "attempts": 10, "time": 75, "accent": "lime"},
-    "pro": {"name": "Профи", "maximum": 100, "attempts": 7, "time": 60, "accent": "violet"},
-    "mythic": {"name": "Мифик", "maximum": 500, "attempts": 8, "time": 90, "accent": "pink"},
+    "easy": {"name": "Легко", "maximum": 50, "attempts": 10, "time": 75},
+    "normal": {"name": "Нормально", "maximum": 100, "attempts": 7, "time": 60},
+    "hard": {"name": "Сложно", "maximum": 500, "attempts": 8, "time": 90},
 }
 
 
 def connect_db():
     os.makedirs(app.instance_path, exist_ok=True)
-    connection = sqlite3.connect(app.config["DATABASE"])
-    connection.row_factory = sqlite3.Row
-    return connection
+    db = sqlite3.connect(app.config["DATABASE"])
+    db.row_factory = sqlite3.Row
+    return db
 
 
 def init_db():
-    with closing(connect_db()) as db:
+    with connect_db() as db:
         db.executescript("""
             CREATE TABLE IF NOT EXISTS players (
                 name TEXT PRIMARY KEY,
@@ -35,84 +34,73 @@ def init_db():
                 wins INTEGER NOT NULL DEFAULT 0,
                 streak INTEGER NOT NULL DEFAULT 0,
                 best_streak INTEGER NOT NULL DEFAULT 0,
-                guesses INTEGER NOT NULL DEFAULT 0
+                guesses INTEGER NOT NULL DEFAULT 0,
+                losses INTEGER NOT NULL DEFAULT 0,
+                hider_points INTEGER NOT NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS results (
                 id TEXT PRIMARY KEY,
-                player TEXT NOT NULL REFERENCES players(name),
+                player TEXT NOT NULL,
                 outcome TEXT NOT NULL,
                 score INTEGER NOT NULL,
                 difficulty TEXT NOT NULL,
                 attempts INTEGER NOT NULL,
+                mode TEXT NOT NULL,
+                hider TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        db.executemany("INSERT OR IGNORE INTO players (name) VALUES (?)", [(name,) for name in PLAYERS])
-        db.commit()
+        for name in PLAYERS:
+            db.execute("INSERT OR IGNORE INTO players(name) VALUES (?)", (name,))
 
 
-def player_name():
+def current_player():
     name = session.get("player")
     if name not in PLAYERS:
-        name = PLAYERS[0]
+        name = "Софья"
         session["player"] = name
     return name
 
 
 def get_profile(name):
-    with closing(connect_db()) as db:
-        row = db.execute("SELECT * FROM players WHERE name = ?", (name,)).fetchone()
+    with connect_db() as db:
+        row = db.execute("SELECT * FROM players WHERE name=?", (name,)).fetchone()
     return dict(row)
 
 
 def get_leaderboard():
-    with closing(connect_db()) as db:
+    with connect_db() as db:
         rows = db.execute("SELECT * FROM players ORDER BY xp DESC, wins DESC, name ASC").fetchall()
     return [dict(row) for row in rows]
 
 
-def record_guess(name):
-    with closing(connect_db()) as db:
-        db.execute("UPDATE players SET guesses = guesses + 1 WHERE name = ?", (name,))
-        db.commit()
+def seconds_left(game):
+    if game.get("mode") != "solo":
+        return game.get("time_limit", 60)
+    elapsed = time.time() - game["started_at"]
+    return max(0, int(game["time_limit"] - elapsed))
 
 
-def save_result(game, name, outcome):
-    if game.get("result_saved"):
-        return
-    with closing(connect_db()) as db:
-        db.execute("BEGIN IMMEDIATE")
-        if outcome == "won":
-            db.execute("""
-                UPDATE players
-                SET xp = xp + ?, wins = wins + 1, streak = streak + 1,
-                    best_streak = MAX(best_streak, streak + 1)
-                WHERE name = ?
-            """, (game["score"], name))
-        else:
-            db.execute("UPDATE players SET streak = 0 WHERE name = ?", (name,))
-        db.execute("""
-            INSERT OR IGNORE INTO results (id, player, outcome, score, difficulty, attempts)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (game["id"], name, outcome, game["score"], game["level"], game["attempts_used"]))
-        db.commit()
-    game["result_saved"] = True
-
-
-def start_game(level="pro"):
-    difficulty = DIFFICULTIES.get(level, DIFFICULTIES["pro"])
+def start_game(level="normal", mode="solo", hider=None, guesser=None):
+    difficulty = DIFFICULTIES.get(level, DIFFICULTIES["normal"])
+    number = random.randint(1, difficulty["maximum"])
     session["game"] = {
         "id": str(uuid.uuid4()),
         "level": level,
-        "number": random.randint(1, difficulty["maximum"]),
+        "mode": mode,
+        "hider": hider,
+        "guesser": guesser,
+        "number": number if mode == "solo" else None,
+        "phase": "playing" if mode == "solo" else "set_number",
         "attempts_used": 0,
         "used_guesses": [],
         "lower_bound": 1,
         "upper_bound": difficulty["maximum"],
         "status": "playing",
-        "message": "Сектор открыт. Сделай первый ход.",
+        "message": "Игра началась! Сделай первую попытку." if mode == "solo" else "Загадывающий игрок должен выбрать число.",
         "message_type": "info",
         "score": 0,
+        "hider_score": 0,
         "started_at": time.time(),
         "time_limit": difficulty["time"],
         "hints_left": 2,
@@ -129,13 +117,10 @@ def current_game():
     return game
 
 
-def seconds_left(game):
-    elapsed = time.time() - game["started_at"]
-    return max(0, int(game["time_limit"] - elapsed))
-
-
 def heat_label(game, guess):
-    ratio = abs(game["number"] - guess) / DIFFICULTIES[game["level"]]["maximum"]
+    distance = abs(game["number"] - guess)
+    maximum = DIFFICULTIES[game["level"]]["maximum"]
+    ratio = distance / maximum
     if ratio <= 0.03:
         return "ОГОНЬ"
     if ratio <= 0.10:
@@ -145,120 +130,170 @@ def heat_label(game, guess):
     return "ХОЛОДНО"
 
 
-def end_by_timeout(game, name):
-    if game["status"] == "playing" and seconds_left(game) <= 0:
-        game["status"] = "lost"
-        game["message"] = f"Время вышло. Загаданное число: {game['number']}"
-        game["message_type"] = "error"
-        save_result(game, name, "lost")
+def calculate_score(game):
+    difficulty = DIFFICULTIES[game["level"]]
+    remaining_attempts = difficulty["attempts"] - game["attempts_used"]
+    attempt_bonus = max(0, remaining_attempts) * 40
+    time_bonus = seconds_left(game) * 2 if game["mode"] == "solo" else 0
+    difficulty_bonus = 100 if game["level"] == "easy" else 150 if game["level"] == "normal" else 250
+    return 100 + attempt_bonus + time_bonus + difficulty_bonus
+
+
+def save_result(game, player, outcome):
+    if game.get("result_saved"):
+        return
+    with connect_db() as db:
+        if outcome == "won":
+            db.execute("""
+                UPDATE players SET xp=xp+?, wins=wins+1, streak=streak+1,
+                best_streak=MAX(best_streak, streak+1)
+                WHERE name=?
+            """, (game["score"], player))
+        else:
+            db.execute("UPDATE players SET xp=xp+?, losses=losses+1, streak=0 WHERE name=?", (game["score"], player))
+        db.execute("""
+            INSERT OR IGNORE INTO results
+            (id, player, outcome, score, difficulty, attempts, mode, hider)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (game["id"], player, outcome, game["score"], game["level"], game["attempts_used"], game["mode"], game["hider"]))
+    game["result_saved"] = True
+
+
+def record_attempt(player):
+    with connect_db() as db:
+        db.execute("UPDATE players SET guesses=guesses+1 WHERE name=?", (player,))
 
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    name = player_name()
+    player = current_player()
     game = current_game()
-    end_by_timeout(game, name)
+
+    if game["mode"] == "solo" and game["status"] == "playing" and seconds_left(game) <= 0:
+        game["status"] = "lost"
+        game["phase"] = "finished"
+        game["score"] = 20
+        game["message"] = f"Время вышло. Было загадано число {game['number']}"
+        game["message_type"] = "error"
+        save_result(game, player, "lost")
 
     if request.method == "POST":
-        action = request.form.get("action", "guess")
+        action = request.form.get("action", "")
 
         if action == "select_player":
             selected = request.form.get("player", "")
             if selected in PLAYERS:
                 session["player"] = selected
-                start_game(game["level"])
+                player = selected
             return redirect(url_for("index"))
 
         if action == "new_game":
-            start_game(request.form.get("level", game["level"]))
+            start_game(request.form.get("level", game["level"]), "solo", guesser=player)
             return redirect(url_for("index"))
 
-        if action == "hint" and game["status"] == "playing":
-            if game["hints_left"] > 0:
-                game["hints_left"] -= 1
-                number = game["number"]
-                if game["hints_left"] == 1:
-                    clue = "Это " + ("чётное" if number % 2 == 0 else "нечётное") + " число"
-                else:
-                    zone = max(1, (number - 1) // 10 * 10)
-                    maximum = DIFFICULTIES[game["level"]]["maximum"]
-                    clue = f"Цель находится в зоне примерно {zone}–{min(zone + 9, maximum)}"
-                game["message"] = "СКАН: " + clue
-                game["message_type"] = "hint"
+        if action == "setup_pass":
+            hider = request.form.get("hider", "")
+            guesser = request.form.get("guesser", "")
+            level = request.form.get("level", game["level"])
+            if hider in PLAYERS and guesser in PLAYERS and hider != guesser:
+                start_game(level, "pass", hider=hider, guesser=guesser)
+                session["player"] = hider
+                player = hider
             else:
-                game["message"] = "Сканы закончились на этот раунд"
+                game["message"] = "Выбери двух разных игроков"
                 game["message_type"] = "warning"
+            return redirect(url_for("index"))
 
-        elif game["status"] != "playing":
-            game["message"] = "Раунд завершён. Запускай следующий сектор!"
-            game["message_type"] = "warning"
-
-        elif action == "guess":
-            raw_guess = request.form.get("guess", "").strip()
+        if action == "set_number" and game["mode"] == "pass" and game["phase"] == "set_number":
+            maximum = DIFFICULTIES[game["level"]]["maximum"]
             try:
-                guess = int(raw_guess)
+                number = int(request.form.get("secret_number", "").strip())
             except ValueError:
+                number = 0
+            if 1 <= number <= maximum:
+                game["number"] = number
+                game["phase"] = "playing"
+                game["status"] = "playing"
+                game["started_at"] = time.time()
+                session["player"] = game["guesser"]
+                player = game["guesser"]
+                game["message"] = f"Число установлено. Ход игрока {game['guesser']}"
+                game["message_type"] = "info"
+            else:
+                game["message"] = f"Введите число от 1 до {maximum}"
+                game["message_type"] = "error"
+
+        if action == "guess" and game["status"] == "playing" and game["phase"] == "playing":
+            maximum = DIFFICULTIES[game["level"]]["maximum"]
+            try:
+                guess = int(request.form.get("guess", "").strip())
+            except ValueError:
+                guess = None
+
+            if guess is None:
                 game["message"] = "Введите целое число"
                 game["message_type"] = "error"
+            elif not 1 <= guess <= maximum:
+                game["message"] = f"Число должно быть от 1 до {maximum}"
+                game["message_type"] = "error"
+            elif guess in game["used_guesses"]:
+                game["message"] = "Этот вариант уже был"
+                game["message_type"] = "warning"
             else:
-                maximum = DIFFICULTIES[game["level"]]["maximum"]
-                if not 1 <= guess <= maximum:
-                    game["message"] = f"Координаты вне диапазона: 1–{maximum}"
-                    game["message_type"] = "error"
-                elif guess in game["used_guesses"]:
-                    game["message"] = "Эту координату ты уже проверял"
-                    game["message_type"] = "warning"
+                game["used_guesses"].append(guess)
+                game["attempts_used"] += 1
+                record_attempt(game["guesser"] if game["mode"] == "pass" else player)
+
+                if guess == game["number"]:
+                    game["status"] = "won"
+                    game["phase"] = "finished"
+                    game["score"] = calculate_score(game)
+                    game["message"] = f"Победа игрока {game['guesser'] if game['mode']=='pass' else player}! Загаданное число найдено"
+                    game["message_type"] = "success"
+                    game["history"].append({"guess": guess, "heat": "HIT", "direction": "цель"})
+                    save_result(game, game["guesser"] if game["mode"] == "pass" else player, "won")
+
+                    if game["mode"] == "pass":
+                        hider = game["hider"]
+                        with connect_db() as db:
+                            db.execute("UPDATE players SET losses=losses+1, streak=0 WHERE name=?", (hider,))
                 else:
-                    game["used_guesses"].append(guess)
-                    game["attempts_used"] += 1
-                    record_guess(name)
-                    remaining = DIFFICULTIES[game["level"]]["attempts"] - game["attempts_used"]
-
-                    if guess == game["number"]:
-                        game["status"] = "won"
-                        game["score"] = (100 + remaining * 40 + seconds_left(game) * 2) * (maximum // 100 + 1)
-                        game["message"] = f"DIRECT HIT! Сектор взят за {game['attempts_used']} ходов"
-                        game["message_type"] = "success"
-                        game["history"].append({"guess": guess, "heat": "HIT", "direction": "цель"})
-                        save_result(game, name, "won")
+                    if guess < game["number"]:
+                        game["lower_bound"] = max(game["lower_bound"], guess + 1)
+                        direction = "выше"
                     else:
-                        if guess < game["number"]:
-                            game["lower_bound"] = max(game["lower_bound"], guess + 1)
-                            direction = "выше"
-                        else:
-                            game["upper_bound"] = min(game["upper_bound"], guess - 1)
-                            direction = "ниже"
+                        game["upper_bound"] = min(game["upper_bound"], guess - 1)
+                        direction = "ниже"
 
-                        heat = heat_label(game, guess)
-                        game["history"].append({"guess": guess, "heat": heat, "direction": direction})
-                        if remaining <= 0:
-                            game["status"] = "lost"
-                            game["message"] = f"Попытки на нуле. Цель была {game['number']}"
-                            game["message_type"] = "error"
-                            save_result(game, name, "lost")
-                        else:
-                            parity = "чётная" if game["number"] % 2 == 0 else "нечётная"
-                            game["message"] = f"Цель {direction} · {heat} · Ключ: {parity}"
-                            game["message_type"] = "info"
+                    game["history"].append({"guess": guess, "heat": heat_label(game, guess), "direction": direction})
+                    difficulty = DIFFICULTIES[game["level"]]
+                    if game["attempts_used"] >= difficulty["attempts"]:
+                        game["status"] = "lost"
+                        game["phase"] = "finished"
+                        game["score"] = 20
+                        game["message"] = f"Попытки закончились. Было загадано число {game['number']}"
+                        game["message_type"] = "error"
+                        target = game["guesser"] if game["mode"] == "pass" else player
+                        save_result(game, target, "lost")
+
+                        if game["mode"] == "pass":
+                            hider = game["hider"]
+                            game["hider_score"] = 100
+                            with connect_db() as db:
+                                db.execute("UPDATE players SET xp=xp+100, wins=wins+1, streak=streak+1, best_streak=MAX(best_streak, streak+1), hider_points=hider_points+100 WHERE name=?", (hider,))
+                    else:
+                        game["message"] = f"Цель {direction} · {heat_label(game, guess)}"
+                        game["message_type"] = "info"
 
         session.modified = True
 
-    profile = get_profile(name)
+    profile = get_profile(player)
     leaderboard = get_leaderboard()
     level = profile["xp"] // 500 + 1
     level_progress = profile["xp"] % 500
-    return render_template(
-        "index.html",
-        game=game,
-        difficulties=DIFFICULTIES,
-        profile=profile,
-        players=PLAYERS,
-        current_player=name,
-        leaderboard=leaderboard,
-        seconds_left=seconds_left(game),
-        level=level,
-        level_progress=level_progress,
-    )
+    return render_template("index.html", game=game, difficulties=DIFFICULTIES, players=PLAYERS,
+        player=player, profile=profile, leaderboard=leaderboard, level=level,
+        level_progress=level_progress, seconds_left=seconds_left(game))
 
 
 with app.app_context():
