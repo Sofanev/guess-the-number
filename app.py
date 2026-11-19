@@ -50,7 +50,7 @@ def init_db():
                 outcome TEXT NOT NULL,
                 score INTEGER NOT NULL,
                 difficulty TEXT NOT NULL,
-                attempts INTEGER NOT NOT NULL,
+                attempts INTEGER NOT NULL,
                 mode TEXT NOT NULL,
                 hider TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -101,7 +101,7 @@ def start_game(level="normal", mode="solo", hider=None, guesser=None):
         "phase": "playing" if mode == "solo" else "set_number",
         "attempts_used": 0, "used_guesses": [], "lower_bound": 1,
         "upper_bound": difficulty["maximum"], "status": "playing",
-        "message": "Сигнал найден. Сделай первый выстрел." if mode == "solo" else "Хранитель должен ввести секретный ключ.",
+        "message": "Сигнал найден. Сделай первый выстрел." if mode == "solo" else "Хранитель должен ��вести секретный ключ.",
         "message_type": "info", "score": 0, "hider_score": 0,
         "started_at": time.time(), "time_limit": difficulty["time"],
         "hints_left": 2, "history": [], "result_saved": False,
