@@ -3,134 +3,98 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NUM//HUNT — число как цель</title>
+    <meta name="theme-color" content="#090914">
+    <title>NUM//HUNT — Угадай число</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="theme-{{ game.level }}">
-    {% set difficulty = difficulties[game.level] %}
-    <main class="shell">
-        <header class="topbar">
-            <a class="brand" href="/" aria-label="NUM HUNT"><span>NUM</span>//HUNT</a>
-            <form method="post" class="player-picker">
-                <input type="hidden" name="action" value="select_player">
-                <label for="player">ИГРОК</label>
-                <select id="player" name="player" onchange="this.form.submit()">
-                    {% for player in players %}<option value="{{ player }}" {% if player == current_player %}selected{% endif %}>{{ player }}</option>{% endfor %}
-                </select>
-            </form>
-            <div class="profile">
-                <div class="avatar">LV.{{ level }}</div>
-                <div class="profile-copy">
-                    <strong>{{ profile.xp }} XP</strong>
-                    <div class="xp-track"><i style="width: {{ level_progress // 5 }}%"></i></div>
-                </div>
+<body>
+    <canvas class="number-field" id="number-field" aria-hidden="true"></canvas>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+    <main class="container">
+        <section class="card">
+            <div class="card-grid" aria-hidden="true"></div>
+            <div class="badge"><span class="live-dot"></span> ИГРА ПО ЛОКАЛЬНОЙ СЕТИ</div>
+            <div class="hero-number" aria-hidden="true"><span>0</span><span>1</span><span>?</span></div>
+            <h1>Угадай<br><span>число</span><i>.</i></h1>
+            <p class="subtitle">Найди секретную координату.<br>Собери очки. Забери победу.</p>
+
+            {% set difficulty = difficulties[game.level] %}
+            <div class="stats">
+                <div><span>ДИАПАЗОН</span><strong>1—{{ difficulty.maximum }}</strong></div>
+                <div><span>ПОПЫТКИ</span><strong>{{ game.attempts_used }}<i>/{{ difficulty.attempts }}</i></strong></div>
+                <div><span>СЧЁТ</span><strong>{{ game.score }}</strong></div>
             </div>
-        </header>
 
-        <section class="game-grid">
-            <aside class="side-panel">
-                <div class="eyebrow">РЕКОРД · {{ current_player|upper }}</div>
-                <div class="streak"><strong>{{ profile.streak }}</strong><span>x streak</span></div>
-                <div class="mini-stats">
-                    <div><span>Победы</span><b>{{ profile.wins }}</b></div>
-                    <div><span>Лучший streak</span><b>{{ profile.best_streak }}</b></div>
+            <div class="message {{ game.message_type }}"><span class="message-mark">✳</span>{{ game.message }}</div>
+
+            {% if game.status == 'playing' %}
+            <form method="post" class="guess-form">
+                <label for="guess">ТВОЯ КООРДИНАТА</label>
+                <div class="input-row">
+                    <input id="guess" name="guess" type="number" min="1" max="{{ difficulty.maximum }}" placeholder="Например, 42" required autofocus>
+                    <button type="submit">ПРОВЕРИТЬ <span>↗</span></button>
                 </div>
+            </form>
+            {% else %}
+            <div class="result"><span>✦</span> Раунд завершён. Готов к реваншу?</div>
+            {% endif %}
 
-                <div class="mode-block">
-                    <div class="eyebrow">РЕЖИМ СЕКТОРА</div>
-                    <form method="post">
-                        <input type="hidden" name="action" value="new_game">
-                        {% for key, item in difficulties.items() %}
-                        <label class="mode {{ 'active' if key == game.level }}">
-                            <input type="radio" name="level" value="{{ key }}" {% if key == game.level %}checked{% endif %} onchange="this.form.submit()">
-                            <span class="mode-dot"></span>
-                            <span><b>{{ item.name }}</b><small>{{ item.maximum }} · {{ item.attempts }} ходов</small></span>
-                        </label>
-                        {% endfor %}
-                    </form>
-                </div>
-
-                <div class="leaderboard">
-                    <div class="eyebrow">ТАБЛИЦА ИГРОКОВ</div>
-                    {% for player in leaderboard %}
-                    <div class="leader-row {{ 'current' if player.name == current_player }}">
-                        <span class="rank">{{ loop.index }}</span><span class="leader-name">{{ player.name }}</span><b>{{ player.xp }} XP</b>
-                    </div>
+            <form method="post" class="new-game-form">
+                <input type="hidden" name="action" value="new_game">
+                <label for="level">ВЫБЕРИ УРОВЕНЬ</label>
+                <select id="level" name="level">
+                    {% for key, item in difficulties.items() %}
+                    <option value="{{ key }}" {% if key == game.level %}selected{% endif %}>
+                        {{ item.name }} — до {{ item.maximum }}, {{ item.attempts }} попыток
+                    </option>
                     {% endfor %}
-                </div>
-            </aside>
+                </select>
+                <button class="secondary" type="submit">↻ &nbsp; НОВЫЙ РАУНД</button>
+            </form>
 
-            <section class="arena">
-                <div class="arena-head">
-                    <div><span class="live-dot"></span><span>SECTOR / {{ difficulty.maximum }}</span></div>
-                    <div class="timer" id="timer" data-remaining="{{ seconds_left }}" data-status="{{ game.status }}"><span>00:</span><b>{{ '%02d' % seconds_left }}</b></div>
-                </div>
-
-                <div class="target-zone">
-                    <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-                    <div class="target-core"><span>?</span><small>{{ game.lower_bound }} — {{ game.upper_bound }}</small></div>
-                </div>
-
-                <div class="hud-row">
-                    <div><span>ХОДЫ</span><strong>{{ game.attempts_used }}/{{ difficulty.attempts }}</strong></div>
-                    <div><span>СКАНЫ</span><strong>{{ game.hints_left }}/2</strong></div>
-                    <div><span>СКОР РАУНДА</span><strong>{{ game.score }}</strong></div>
-                </div>
-
-                <div class="message {{ game.message_type }}" id="message">{{ game.message }}</div>
-
-                {% if game.status == 'playing' %}
-                <form method="post" class="guess-form" autocomplete="off">
-                    <input type="hidden" name="action" value="guess">
-                    <label class="sr-only" for="guess">Число</label>
-                    <input id="guess" name="guess" type="number" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" placeholder="Введи координату" required autofocus>
-                    <button type="submit">ВЫСТРЕЛ <span>→</span></button>
-                </form>
-                <form method="post" class="hint-form"><button name="action" value="hint" {% if game.hints_left == 0 %}disabled{% endif %}>⌁ СКАН ЦЕЛИ</button></form>
-                {% else %}
-                <form method="post" class="again-form">
-                    <input type="hidden" name="action" value="new_game"><input type="hidden" name="level" value="{{ game.level }}">
-                    <button type="submit">{% if game.status == 'won' %}ЗАБРАТЬ NEXT SECTOR{% else %}ПЕРЕЗАГРУЗИТЬ СЕКТОР{% endif %} <span>→</span></button>
-                </form>
-                {% endif %}
-
-                <section class="guess-history" aria-live="polite">
-                    <div class="history-title"><span class="eyebrow">ИСТОРИЯ ВАРИАНТОВ</span><span>{{ game.history|length }} ход(а/ов)</span></div>
-                    {% if game.history %}
-                    <div class="history">
-                        {% for item in game.history|reverse %}
-                        <div class="shot {{ 'hit' if item.heat == 'HIT' }}">
-                            <b>#{{ item.guess }}</b><span>{{ item.heat }}</span><small>{{ item.direction }}</small>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% else %}<p class="empty-history">Твои варианты появятся здесь после первого выстрела.</p>{% endif %}
-                </section>
-            </section>
+            <div class="range"><span class="range-line"></span> ОБЛАСТЬ ПОИСКА <b>{{ game.lower_bound }}—{{ game.upper_bound }}</b><span class="range-line"></span></div>
         </section>
+        <p class="footer"><span>NUM//HUNT</span> · Каждый браузер — отдельная игра</p>
     </main>
-
     <script>
-        const timer = document.getElementById('timer');
-        let left = Number(timer.dataset.remaining);
-        const ticking = setInterval(() => {
-            if (timer.dataset.status !== 'playing') { clearInterval(ticking); return; }
-            left = Math.max(0, left - 1);
-            timer.querySelector('b').textContent = String(left).padStart(2, '0');
-            if (left <= 10) timer.classList.add('danger');
-            if (left === 0) window.location.reload();
-        }, 1000);
-
-        if (document.querySelector('.message.success')) {
-            for (let i = 0; i < 28; i++) {
-                const particle = document.createElement('i');
-                particle.className = 'particle';
-                particle.style.setProperty('--x', Math.random() * 100 + 'vw');
-                particle.style.setProperty('--r', (Math.random() * 720 - 360) + 'deg');
-                particle.style.animationDelay = Math.random() * .35 + 's';
-                document.body.appendChild(particle);
-                setTimeout(() => particle.remove(), 1800);
+        (() => {
+            const canvas = document.getElementById('number-field');
+            const ctx = canvas.getContext('2d');
+            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const glyphs = ['0', '1', '7', '3', '9', '42', '∞'];
+            let width = 0, height = 0, particles = [];
+            function resize() {
+                const ratio = Math.min(window.devicePixelRatio || 1, 2);
+                width = window.innerWidth; height = window.innerHeight;
+                canvas.width = width * ratio; canvas.height = height * ratio;
+                canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
+                ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+                const count = Math.min(42, Math.floor(width / 30));
+                particles = Array.from({length: count}, () => ({x: Math.random()*width, y: Math.random()*height, glyph: glyphs[Math.floor(Math.random()*glyphs.length)], size: 12+Math.random()*18, speed: .12+Math.random()*.32, alpha: .08+Math.random()*.14}));
             }
+            function draw() {
+                ctx.clearRect(0, 0, width, height);
+                for (const p of particles) {
+                    ctx.font = `${p.size}px 'DM Mono', monospace`;
+                    ctx.fillStyle = `rgba(171, 148, 255, ${p.alpha})`;
+                    ctx.fillText(p.glyph, p.x, p.y);
+                    if (!reducedMotion) { p.y -= p.speed; if (p.y < -30) { p.y = height+30; p.x = Math.random()*width; } }
+                }
+                if (!reducedMotion) requestAnimationFrame(draw);
+            }
+            resize(); draw();
+            window.addEventListener('resize', () => { resize(); if (reducedMotion) draw(); });
+        })();
+
+        const input = document.getElementById('guess');
+        if (input) {
+            input.addEventListener('input', () => {
+                input.closest('.guess-form').classList.toggle('has-value', input.value.length > 0);
+            });
         }
     </script>
 </body>
