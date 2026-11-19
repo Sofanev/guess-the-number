@@ -1,106 +1,78 @@
 import random
-from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
-class Difficulty:
-    name: str
-    maximum: int
-    attempts: int
-
-
-DIFFICULTIES = {
-    "1": Difficulty("Легко", 50, 10),
-    "2": Difficulty("Нормально", 100, 7),
-    "3": Difficulty("Сложно", 500, 8),
+MODES = {
+    "1": ("Новичок", 50, 10),
+    "2": ("Профи", 100, 7),
+    "3": ("Мифик", 500, 8),
 }
 
 
-def choose_difficulty() -> Difficulty:
-    print("\nВыберите сложность:")
-    for key, difficulty in DIFFICULTIES.items():
-        print(
-            f"{key}. {difficulty.name}: число от 1 до {difficulty.maximum}, "
-            f"попыток — {difficulty.attempts}"
-        )
-
+def choose_mode():
+    print("\n// ВЫБЕРИ СЕКТОР")
+    for key, (name, maximum, attempts) in MODES.items():
+        print(f"  {key}. {name} — {maximum} координат, {attempts} ходов")
     while True:
-        choice = input("Ваш выбор: ").strip()
-        if choice in DIFFICULTIES:
-            return DIFFICULTIES[choice]
-        print("Выберите вариант 1, 2 или 3.")
+        choice = input("Сектор: ").strip()
+        if choice in MODES:
+            name, maximum, attempts = MODES[choice]
+            return name, maximum, attempts
+        print("Выбери 1, 2 или 3.")
 
 
-def show_hint(number: int, guess: int, lower_bound: int, upper_bound: int) -> None:
-    distance = abs(number - guess)
-    if distance <= 5:
-        print("Подсказка: очень близко!")
-    elif distance <= 20:
-        print("Подсказка: близко.")
-    else:
-        print("Подсказка: пока далеко.")
+def play_round():
+    name, maximum, attempts = choose_mode()
+    target = random.randint(1, maximum)
+    used = set()
+    lower, upper = 1, maximum
 
-    print(f"Число {'чётное' if number % 2 == 0 else 'нечётное'}.")
-    print(f"Оно находится между {lower_bound} и {upper_bound}.")
+    print(f"\nNUM//HUNT :: режим «{name}»")
+    print(f"Цель скрыта в секторе 1–{maximum}. Ходов: {attempts}.\n")
 
-
-def play_round() -> None:
-    difficulty = choose_difficulty()
-    number = random.randint(1, difficulty.maximum)
-    lower_bound = 1
-    upper_bound = difficulty.maximum
-    used_guesses = set()
-    score = 0
-
-    print(
-        f"\nЯ загадал число от 1 до {difficulty.maximum}. "
-        f"У вас {difficulty.attempts} попыток."
-    )
-
-    for attempt in range(1, difficulty.attempts + 1):
-        remaining = difficulty.attempts - attempt + 1
+    for attempt in range(1, attempts + 1):
         try:
-            guess = int(input(f"Попытка {attempt}/{difficulty.attempts}. Ваш вариант: "))
+            guess = int(input(f"[{attempt}/{attempts}] Координата: ").strip())
         except ValueError:
-            print("Введите целое число — такая попытка не засчитывается.")
+            print("! Нужна целая координата. Ход не засчитан.")
             continue
 
-        if not 1 <= guess <= difficulty.maximum:
-            print(f"Введите число от 1 до {difficulty.maximum}.")
+        if not 1 <= guess <= maximum:
+            print(f"! Координата вне диапазона 1–{maximum}")
             continue
-        if guess in used_guesses:
-            print("Вы уже называли это число. Попробуйте другое.")
+        if guess in used:
+            print("! Эта координата уже была проверена")
             continue
 
-        used_guesses.add(guess)
-        score = max(0, (difficulty.attempts - attempt + 1) * 10)
-
-        if guess == number:
-            print(f"\nПобеда! Вы угадали за {attempt} попыток.")
-            print(f"Ваш счёт: {score} очков.")
+        used.add(guess)
+        if guess == target:
+            score = (attempts - attempt + 1) * 100
+            print(f"\nDIRECT HIT! Цель найдена за {attempt} ходов.")
+            print(f"Скор: {score} XP")
             return
 
-        if guess < number:
-            lower_bound = max(lower_bound, guess + 1)
-            print("Загаданное число больше.")
+        if guess < target:
+            lower = max(lower, guess + 1)
+            direction = "выше"
         else:
-            upper_bound = min(upper_bound, guess - 1)
-            print("Загаданное число меньше.")
+            upper = min(upper, guess - 1)
+            direction = "ниже"
 
-        if remaining > 1:
-            show_hint(number, guess, lower_bound, upper_bound)
+        distance = abs(target - guess)
+        ratio = distance / maximum
+        heat = "ОГОНЬ" if ratio <= .03 else "ЖАРКО" if ratio <= .10 else "ТЕПЛО" if ratio <= .22 else "ХОЛОДНО"
+        print(f"Цель {direction} · {heat} · зона {lower}–{upper}")
 
-    print(f"\nПопытки закончились. Было загадано число {number}.")
-    print("В следующий раз получится!")
+    print(f"\nСектор закрыт. Загаданное число: {target}")
 
 
-def main() -> None:
-    print("=== Угадай число ===")
+def main():
+    print("=== NUM//HUNT ===")
+    streak = 0
     while True:
         play_round()
-        answer = input("\nСыграть ещё раз? (д/н): ").strip().lower()
-        if answer not in {"д", "да", "y", "yes"}:
-            print("Спасибо за игру!")
+        again = input("\nЗапустить новый сектор? (д/н): ").strip().lower()
+        if again not in {"д", "да", "y", "yes"}:
+            print("Сессия завершена.")
             break
 
 

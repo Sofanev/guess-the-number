@@ -3,53 +3,128 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Угадай число</title>
+    <title>NUM//HUNT — число как цель</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
-    <main class="container">
-        <section class="card">
-            <div class="badge">Игра по локальной сети</div>
-            <h1>Угадай число</h1>
-            <p class="subtitle">Найдите число и наберите как можно больше очков.</p>
-
-            {% set difficulty = difficulties[game.level] %}
-            <div class="stats">
-                <div><span>Диапазон</span><strong>1–{{ difficulty.maximum }}</strong></div>
-                <div><span>Попытки</span><strong>{{ game.attempts_used }}/{{ difficulty.attempts }}</strong></div>
-                <div><span>Возможный счёт</span><strong>{{ game.score }}</strong></div>
-            </div>
-
-            <div class="message {{ game.message_type }}">{{ game.message }}</div>
-
-            {% if game.status == 'playing' %}
-            <form method="post" class="guess-form">
-                <label for="guess">Ваш вариант</label>
-                <div class="input-row">
-                    <input id="guess" name="guess" type="number" min="1" max="{{ difficulty.maximum }}" required autofocus>
-                    <button type="submit">Проверить</button>
+<body class="theme-{{ game.level }}">
+    {% set difficulty = difficulties[game.level] %}
+    <main class="shell">
+        <header class="topbar">
+            <a class="brand" href="/" aria-label="NUM HUNT"><span>NUM</span>//HUNT</a>
+            <div class="profile">
+                <div class="avatar">LV.{{ level }}</div>
+                <div class="profile-copy">
+                    <strong>{{ profile.xp }} XP</strong>
+                    <div class="xp-track"><i style="width: {{ level_progress // 5 }}%"></i></div>
                 </div>
-            </form>
-            {% else %}
-            <div class="result">Раунд завершён. Попробуйте ещё раз!</div>
-            {% endif %}
+                <form method="post" class="stats-reset"><button name="action" value="reset_stats" title="Сбросить статистику" aria-label="Сбросить статистику">↻</button></form>
+            </div>
+        </header>
 
-            <form method="post" class="new-game-form">
-                <input type="hidden" name="action" value="new_game">
-                <label for="level">Сложность</label>
-                <select id="level" name="level">
-                    {% for key, item in difficulties.items() %}
-                    <option value="{{ key }}" {% if key == game.level %}selected{% endif %}>
-                        {{ item.name }} — до {{ item.maximum }}, {{ item.attempts }} попыток
-                    </option>
+        <section class="game-grid">
+            <aside class="side-panel">
+                <div class="eyebrow">ЛИЧНЫЙ РЕКОРД</div>
+                <div class="streak"><strong>{{ profile.streak }}</strong><span>x streak</span></div>
+                <div class="mini-stats">
+                    <div><span>Победы</span><b>{{ profile.wins }}</b></div>
+                    <div><span>Лучший streak</span><b>{{ profile.best_streak }}</b></div>
+                </div>
+
+                <div class="mode-block">
+                    <div class="eyebrow">РЕЖИМ СЕКТОРА</div>
+                    <form method="post">
+                        <input type="hidden" name="action" value="new_game">
+                        {% for key, item in difficulties.items() %}
+                        <label class="mode {{ 'active' if key == game.level }}">
+                            <input type="radio" name="level" value="{{ key }}" {% if key == game.level %}checked{% endif %} onchange="this.form.submit()">
+                            <span class="mode-dot"></span>
+                            <span><b>{{ item.name }}</b><small>{{ item.maximum }} · {{ item.attempts }} ходов</small></span>
+                        </label>
+                        {% endfor %}
+                    </form>
+                </div>
+            </aside>
+
+            <section class="arena">
+                <div class="arena-head">
+                    <div>
+                        <span class="live-dot"></span>
+                        <span>SECTOR / {{ difficulty.maximum }}</span>
+                    </div>
+                    <div class="timer" id="timer" data-remaining="{{ seconds_left }}" data-status="{{ game.status }}"><span>00:</span><b>{{ '%02d' % seconds_left }}</b></div>
+                </div>
+
+                <div class="target-zone">
+                    <div class="orbit orbit-one"></div>
+                    <div class="orbit orbit-two"></div>
+                    <div class="target-core">
+                        <span>?</span>
+                        <small>{{ game.lower_bound }} — {{ game.upper_bound }}</small>
+                    </div>
+                </div>
+
+                <div class="hud-row">
+                    <div><span>ХОДЫ</span><strong>{{ game.attempts_used }}/{{ difficulty.attempts }}</strong></div>
+                    <div><span>СКАНЫ</span><strong>{{ game.hints_left }}/2</strong></div>
+                    <div><span>СКОР</span><strong>{{ game.score }}</strong></div>
+                </div>
+
+                <div class="message {{ game.message_type }}" id="message">
+                    {{ game.message }}
+                </div>
+
+                {% if game.status == 'playing' %}
+                <form method="post" class="guess-form" autocomplete="off">
+                    <input type="hidden" name="action" value="guess">
+                    <label class="sr-only" for="guess">Число</label>
+                    <input id="guess" name="guess" type="number" inputmode="numeric" min="1" max="{{ difficulty.maximum }}" placeholder="Введи координату" required autofocus>
+                    <button type="submit">ВЫСТРЕЛ <span>→</span></button>
+                </form>
+                <form method="post" class="hint-form">
+                    <button name="action" value="hint" {% if game.hints_left == 0 %}disabled{% endif %}>⌁ СКАН ЦЕЛИ</button>
+                </form>
+                {% else %}
+                <form method="post" class="again-form">
+                    <input type="hidden" name="action" value="new_game">
+                    <input type="hidden" name="level" value="{{ game.level }}">
+                    <button type="submit">{% if game.status == 'won' %}ЗАБРАТЬ NEXT SECTOR{% else %}ПЕРЕЗАГРУЗИТЬ СЕКТОР{% endif %} <span>→</span></button>
+                </form>
+                {% endif %}
+
+                {% if game.history %}
+                <div class="history">
+                    {% for item in game.history|reverse %}
+                    <div class="shot {{ 'hit' if item.heat == 'HIT' }}">
+                        <b>#{{ item.guess }}</b><span>{{ item.heat }}</span><small>{{ item.direction }}</small>
+                    </div>
                     {% endfor %}
-                </select>
-                <button class="secondary" type="submit">Новая игра</button>
-            </form>
-
-            <p class="range">Текущий диапазон поиска: <b>{{ game.lower_bound }}–{{ game.upper_bound }}</b></p>
+                </div>
+                {% endif %}
+            </section>
         </section>
-        <p class="footer">Каждый браузер получает свою отдельную игру.</p>
     </main>
+
+    <script>
+        const timer = document.getElementById('timer');
+        let left = Number(timer.dataset.remaining);
+        const ticking = setInterval(() => {
+            if (timer.dataset.status !== 'playing') { clearInterval(ticking); return; }
+            left = Math.max(0, left - 1);
+            timer.querySelector('b').textContent = String(left).padStart(2, '0');
+            if (left <= 10) timer.classList.add('danger');
+        }, 1000);
+
+        if (document.querySelector('.message.success')) {
+            for (let i = 0; i < 28; i++) {
+                const particle = document.createElement('i');
+                particle.className = 'particle';
+                particle.style.setProperty('--x', Math.random() * 100 + 'vw');
+                particle.style.setProperty('--r', (Math.random() * 720 - 360) + 'deg');
+                particle.style.animationDelay = Math.random() * .35 + 's';
+                document.body.appendChild(particle);
+                setTimeout(() => particle.remove(), 1800);
+            }
+        }
+    </script>
 </body>
 </html>
